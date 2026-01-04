@@ -298,13 +298,14 @@ contains
   use radinfo, only: iland_det, isnow_det, iwater_det, imix_det, iice_det, &
                       iomg_det, itopo_det, isst_det,iwndspeed_det, optconv
   use qcmod, only: setup_tzr_qc,ifail_scanedge_qc,ifail_outside_range
+  use qcmod, only: ifail_tms_overall_qc,ifail_outside_range
   use qcmod, only: iasi_cads, iasing_cads, cris_cads
   use state_vectors, only: svars3d, levels, svars2d, ns3d
   use oneobmod, only: lsingleradob,obchan,oblat,oblon,oneob_type
   use correlated_obsmod, only: corr_adjust_jacobian, idnames
   use radiance_mod, only: rad_obs_type,radiance_obstype_search,radiance_ex_obserr,radiance_ex_biascor
   use sparsearr, only: sparr2, new, writearray, size, fullarray
-  use radiance_mod, only: radiance_ex_obserr_gmi,radiance_ex_biascor_gmi
+  use radiance_mod, only: radiance_ex_obserr_gmi,radiance_ex_biascor_gmi,radiance_ex_obserr_tms
   use cads, only: cads_imager_calc
 
   use, intrinsic :: ieee_arithmetic
@@ -450,6 +451,10 @@ contains
   real(r_kind),dimension(7,nobs)   :: imager_cluster_fraction
   real(r_kind),dimension(2,7,nobs) :: imager_cluster_bt
   real(r_kind),dimension(2,nobs)   :: imager_chan_stdev, imager_model_bt
+
+! variables added for TMS
+  integer(i_kind),dimension(nchanl):: qcflag !xzhang
+  logical :: tms_qcflag=.true. !xzhang
 
 ! Notations in use: for a single obs. or a single obs. type
 ! nchanl        : a known channel count of a given type obs stream
@@ -912,10 +917,20 @@ contains
               if (iuse_rad(j)< -1 .or. (channel_passive(j) .and.  &
                   .not.rad_diagsave)) tnoise(jc)=r1e10
            end if
+
+!       Load tms qc flag into work array.
+        if (tms .and. tms_qcflag) then
+            qcflag(jc) = data_s(jc+nreal-12,n)
+            if (qcflag(jc) == 1 ) then
+               id_qc(jc) = ifail_tms_overall_qc
+               !print*, 'tms id_qc for overall is ', id_qc
+            end if
+        end if
      
 !       Load channel data into work array.
            tb_obs(jc) = data_s(jc+nreal,n)
         end do
+
  
 
 !       Interpolate model fields to observation location, call crtm and create jacobians
@@ -924,6 +939,7 @@ contains
         tcc=zero
         total_cloud_cover=zero
         if (radmod%lcloud_fwd) then
+          !print*,'xiaoyan check radmod%lcloud_fwd) =',radmod%lcloud_fwd
           call call_crtm(obstype,dtime,data_s(:,n),nchanl,nreal,ich, &
              tvp,qvp,qs,clw_guess,ciw_guess,rain_guess,snow_guess,graupel_guess,prsltmp,prsitmp, &
              trop5,tzbgr,dtsavg,sfc_speed, &
@@ -959,6 +975,7 @@ contains
           total_cloud_cover = tcc(1)
           cld = total_cloud_cover
         else
+          !print*,'xiaoyan check clear or cloud =',radmod%lcloud_fwd
           call call_crtm(obstype,dtime,data_s(:,n),nchanl,nreal,ich, &
              tvp,qvp,qs,clw_guess,ciw_guess,rain_guess,snow_guess,graupel_guess,prsltmp,prsitmp, &
              trop5,tzbgr,dtsavg,sfc_speed, &
@@ -1078,6 +1095,10 @@ contains
               scatp=scat
             else if (tms) then
               call calc_scat_index_tms(tb_obs(1), tb_obs(2), tb_obs(12), ierrret, lsi, isi)
+              !if (lsi < -33.0 .or. isi < -1.0) then
+              !    
+              !end if
+
            else
               call calc_clw(nadir,tb_obs,tsim,ich,nchanl,no85GHz,amsua,ssmi,ssmis,amsre,atms, &
                    mws,amsr2,gmi,saphir,tsavg5,sfc_speed,zasat,clw_obs,tpwc_obs,gwp,kraintype,ierrret)
@@ -1129,6 +1150,11 @@ contains
                        id_qc(1:8) = ifail_cao_qc
                        varinv(17:24)=zero
                        id_qc(17:24) = ifail_cao_qc
+                    else if (tms) then
+                       varinv(1)=zero
+                       id_qc(1) = ifail_cao_qc
+                       varinv(9:12)=zero
+                       id_qc(9:12) = ifail_cao_qc
                     else
                        varinv(1:nchanl)=zero
                        id_qc(1:nchanl) = ifail_cao_qc
@@ -1375,6 +1401,9 @@ contains
               call radiance_ex_obserr(radmod,nchanl,clw_obs,clw_guess_retrieval,tnoise,tnoise_cld,error0)
            else if (radmod%ex_obserr=='ex_obserr3') then
               call radiance_ex_obserr_gmi(radmod,nchanl,clw_obs,clw_guess_retrieval,tnoise,tnoise_cld,error0) 
+           else if (radmod%ex_obserr=='ex_obserr4') then
+              !call radiance_ex_obserr_tms(radmod,nchanl,clw_obs,clw_guess_retrieval,tnoise,tnoise_cld,error0) 
+              call radiance_ex_obserr_tms(radmod,nchanl,cldeff_obs,cldeff_fg,tnoise,tnoise_cld,error0) 
            end if
         end if
 
@@ -1725,6 +1754,12 @@ contains
                  else if (radmod%rtype/='amsua' .and. radmod%rtype/='atms' .and. radmod%rtype/='gmi' .and. &
                          radmod%rtype/='mws' .and. radmod%lcloud4crtm(i)>=0) then
                     errf(i) = three*errf(i)    
+                 !else if(radmod%rtype == 'tms' .and. (i <= 5 .or. i>=10) ) then
+                 !   if (radmod%lprecip) then
+                 !      errf(i) = min(2.5_r_kind*errf(i),10.0_r_kind)
+                 !   else
+                 !      errf(i) = min(three*errf(i),10.0_r_kind)
+                 !   endif
                  else 
                     errf(i) = min(three*errf(i),ermax_rad(m))
                  endif
@@ -2753,11 +2788,17 @@ contains
                  call nc_diag_metadata_to_single("SST_Cool_layer_tdrop",data_s(idtc,n)                )       ! dt_cool at zob
                  call nc_diag_metadata_to_single("SST_dTz_dTfound",data_s(itz_tr,n)              )       ! d(Tz)/d(Tr)
 
+                 if (tms .and. tms_qcflag) call nc_diag_metadata("QC_Flag_TMS",qcflag(ich_diag(i))  )     ! observed brightness temperature (K)
                  call nc_diag_metadata_to_single("Observation",tb_obs0(ich_diag(i))  )     ! observed brightness temperature (K)
                  call nc_diag_metadata_to_single("Obs_Minus_Forecast_unadjusted",tbcnob(ich_diag(i))   )     ! observed - simulated Tb with no bias correction (K)
                  call nc_diag_metadata_to_single("Obs_Minus_Forecast_adjusted",tbc0(ich_diag(i)   )  )     ! observed - simulated Tb with bias corrrection (K)
-                 errinv = sqrt(varinv0(ich_diag(i)))
+                 !errinv = sqrt(varinv0(ich_diag(i)))
+                 !xyz
+                 errinv = error0(ich_diag(i))
                  call nc_diag_metadata_to_single("Inverse_Observation_Error",errinv           )
+                 call nc_diag_metadata_to_single("Obs_Cloud_Effect",cldeff_obs(ich_diag(i))           )
+                 call nc_diag_metadata_to_single("Bkg_Cloud_Effect",cldeff_fg(ich_diag(i))         )
+
                  if (save_jacobian .and. allocated(idnames)) then
                  call nc_diag_metadata_to_single("Observation_scaled",tb_obs(ich_diag(i))   )     ! observed brightness temperature (K) scaled by R^{-1/2}
                  call nc_diag_metadata_to_single("Obs_Minus_Forecast_adjusted_scaled",tbc(ich_diag(i)  )   )     ! observed - simulated Tb with bias corrrection (K) scaled by R^{-1/2}

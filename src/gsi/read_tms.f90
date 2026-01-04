@@ -178,7 +178,15 @@ subroutine read_tms(mype,val_tovs,ithin,isfcalc,&
   integer(i_kind) :: ithin_time,n_tbin
   integer(i_kind),pointer :: it_mesh => null()
 
-!**************************************************************************
+  real(r_double),dimension(12):: flags !xzhang
+  integer(i_kind), ALLOCATABLE, TARGET :: qc_flag(:,:) !xzhang
+  real(r_double), parameter    :: Missing_Value=1.e11_r_double !xzhang
+  logical :: tms_qcflag=.true. !xzhang
+  integer(i_kind),parameter:: mxib=100
+  integer(i_kind) ibit(mxib),nib,n_bad
+
+
+!**************o***********************************************************
 ! Initialize variables
 
   maxinfo=32
@@ -278,6 +286,7 @@ subroutine read_tms(mype,val_tovs,ithin,isfcalc,&
   nchanl=12
   if(dval_use) maxinfo = maxinfo+2
   nreal = maxinfo + nstinfo
+  if(tms_qcflag) nreal = maxinfo+nstinfo+nchanl
   nele  = nreal   + nchanl
   allocate(data_all(nele,itxmax),nrec(itxmax))
   nrec=999999
@@ -347,10 +356,13 @@ subroutine read_tms(mype,val_tovs,ithin,isfcalc,&
   ALLOCATE(solzen_save(maxobs)) 
   ALLOCATE(solazi_save(maxobs)) 
   ALLOCATE(bt_save(max_chanl,maxobs))
+  ALLOCATE(qc_flag(max_chanl,maxobs))
 
+  qc_flag=0
 ! Read in data from bufr into arrays first      
 ! Open unit to satellite bufr file
   iob=1
+  n_bad=0
   open(lnbufr,file=trim(infile),form='unformatted',status = 'old', iostat = ierr)
   call openbf(lnbufr,'IN',lnbufr)
   call datelen(10)
@@ -456,11 +468,39 @@ subroutine read_tms(mype,val_tovs,ithin,isfcalc,&
 
         solzen_save(iob)=bfr2bhdr(2) 
         solazi_save(iob)=bfr2bhdr(4) 
+!       Read TMSTBR flags for all channels
+        call ufbrep(lnbufr, flags, 1, nchanl, iret, 'TMSF')
+       
+        do i = 1,12
+           call upftbv(lnbufr,'TMSF',flags(i),mxib,ibit,nib)
+           if (flags(i) == 64) then
+             do j = 1,nib
+              write(1238,*) flags(i),ibit(j),j
+             end do
+           end if
+           if (nib > 0 )then
+             do j=1,nib
+               if (ibit(j) == 23) then !v1 before 12/3/2025
+               !if (ibit(j) == 9) then 
+                 qc_flag(i,iob) = 1
+                 write(1239,*) flags(i),ibit(j),j
+                 n_bad=n_bad+1
+               end if
+             end do
+           end if
+        end do
 
 !       Read data record.  Increment data counter
         call ufbrep(lnbufr,data1b8,1,nchanl,iret,'TMBR')
 
+
         bt_save(1:nchanl,iob) = data1b8(1:nchanl)
+
+        ! Replace bad values using the qc_flag array
+        !where (qc_flag(1:nchanl, iob) == 1)
+        !    bt_save(1:nchanl, iob) = missing_value
+        !end where
+
 
         iob=iob+1
 
@@ -670,6 +710,7 @@ subroutine read_tms(mype,val_tovs,ithin,isfcalc,&
         data_all(33,itx)= val_tovs
         data_all(34,itx)= itt
      end if
+
      
      if(nst_gsi>0) then
         data_all(maxinfo+1,itx) = tref            ! foundation temperature
@@ -678,12 +719,21 @@ subroutine read_tms(mype,val_tovs,ithin,isfcalc,&
         data_all(maxinfo+4,itx) = tz_tr           ! d(Tz)/d(Tr)
      endif
 
+     if (tms_qcflag) then
+       do i=1,nchanl
+          data_all(nreal-nchanl+i,itx)=qc_flag(i,iob)
+          !write(1234,*)i,itx,data_all(nreal-nchanl+i,itx)
+          !write(1235,*)i,iob, qc_flag(i,iob)
+       end do
+     end if  
+
      do i=1,nchanl
         data_all(i+nreal,itx)=bt_in(i)
      end do
      nrec(itx)=iob
 
   end do ObsLoop
+  print*,'iob, n_bad = ', iob, n_bad
 
 
   DEALLOCATE(iscan)
@@ -700,6 +750,7 @@ subroutine read_tms(mype,val_tovs,ithin,isfcalc,&
   DEALLOCATE(solzen_save) 
   DEALLOCATE(solazi_save) 
   DEALLOCATE(bt_save)
+  DEALLOCATE(qc_flag)
 
   call combine_radobs(mype_sub,mype_root,npe_sub,mpi_comm_sub,&
        nele,itxmax,nread,ndata,data_all,score_crit,nrec)

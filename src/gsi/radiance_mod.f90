@@ -589,8 +589,8 @@ contains
           match=index(trim(obstype),trim(rad_type_info(i)%rtype)) /= 0
        end if
        if (match) then
-!         if (mype==0) write(6,*) 'radiance_obstype_search: obstype=',obstype, &
-!                                 ' rtype=',rad_type_info(i)%rtype
+         if (mype==0) write(6,*) 'radiance_obstype_search: obstype=',obstype, &
+                                 ' rtype=',rad_type_info(i)%rtype
           radmod%rtype = rad_type_info(i)%rtype
           radmod%nchannel = rad_type_info(i)%nchannel
           radmod%cld_sea_only = rad_type_info(i)%cld_sea_only
@@ -791,6 +791,8 @@ contains
 !            allocate space for entries from table, Obtain table contents
              tablename='obs_'//trim(obsname)
              if ( rad_type_info(i)%ex_obserr == 'ex_obserr3' ) then
+                call sensor_parameter_table(trim(tablename),lunin,rad_type_info(i)%nchannel,rad_type_info(i)%cclr,rad_type_info(i)%ccld,rad_type_info(i)%cldval1)
+             else if ( rad_type_info(i)%ex_obserr == 'ex_obserr4' ) then
                 call sensor_parameter_table(trim(tablename),lunin,rad_type_info(i)%nchannel,rad_type_info(i)%cclr,rad_type_info(i)%ccld,rad_type_info(i)%cldval1)
              else
                 call sensor_parameter_table(trim(tablename),lunin,rad_type_info(i)%nchannel,rad_type_info(i)%cclr,rad_type_info(i)%ccld)
@@ -1288,6 +1290,76 @@ contains
 !  end subroutine radiance_ex_obserr_3
   end subroutine radiance_ex_obserr_gmi
 
+  !subroutine radiance_ex_obserr_tms(radmod,nchanl,clw_obs,clw_guess_retrieval,tnoise,tnoise_cld,error0)
+  subroutine radiance_ex_obserr_tms(radmod,nchanl,cldeff1,cldeff2,tnoise,tnoise_cld,error0)
+!$$$  subprogram documentation block
+!                .      .    .
+! subprogram:    radiance_ex_obserr_4
+!
+!   prgrmmr:    xiaoyan zhang      org: np23                date: 2025-09-22
+!
+! abstract:  This routine include extra radiance bias correction routines.
+!
+! program history log:
+!   2015-09-20  zhu
+!   2016-10-27  zhu - add ATMS
+!
+!   input argument list:
+!
+!   output argument list:
+!
+! attributes:
+!   language: f90
+!   machine:  ibm rs/6000 sp; SGI Origin 2000; Compaq/HP
+!
+!$$$ end documentation block
+
+    use kinds, only: i_kind,r_kind
+    implicit none 
+
+    integer(i_kind),intent(in) :: nchanl
+    !real(r_kind),intent(in) :: clw_obs,clw_guess_retrieval
+    real(r_kind),dimension(nchanl),intent(in) :: cldeff1,cldeff2
+    real(r_kind),dimension(nchanl),intent(in):: tnoise,tnoise_cld
+    real(r_kind),dimension(nchanl),intent(inout) :: error0
+    type(rad_obs_type),intent(in) :: radmod
+
+    integer(i_kind) :: i 
+    !real(r_kind) :: clwavg
+    real(r_kind) :: cldeff
+    real(r_kind),dimension(nchanl) :: cclr,ccld,ccld_1,tnoise_cld_1
+
+    !temperally hardware the STD cloudy1
+    tnoise_cld_1 = (/ 23.0_r_kind, 27.0_r_kind, 19.0_r_kind, 18.0_r_kind, &
+                  40.0_r_kind, 13.0_r_kind, 2.5_r_kind, 2.5_r_kind, &
+                  53.0_r_kind, 20.0_r_kind, 20.0_r_kind, 30.0_r_kind /)
+    do i=1,nchanl
+       cclr(i)=radmod%cclr(i)
+       ccld(i)=radmod%ccld(i)
+       ccld_1(i)=radmod%cldval1(i)
+    end do
+
+    do i=1,nchanl
+       if (radmod%lcloud4crtm(i)<0) cycle
+       !clwavg=half*(clw_obs+clw_guess_retrieval)
+       cldeff=half*(abs(cldeff1(i))+abs(cldeff2(i)))
+       if(cldeff < cclr(i)) then 
+          error0(i) = tnoise(i)
+       else if(cldeff >= cclr(i) .and. cldeff < ccld(i)) then 
+          !error0(i) = (tnoise(i) - tnoise_cld(i))*(ccld(i)-cldeff)/(ccld(i)-cclr(i))
+          error0(i) = (tnoise_cld(i)-tnoise(i))*(cldeff-cclr(i))/(ccld(i)-cclr(i))
+       else if(cldeff >= ccld(i) .and. cldeff < ccld_1(i)) then
+          error0(i) = (tnoise_cld_1(i)-tnoise_cld(i)) * (cldeff-ccld(i))/(ccld_1(i)-ccld(i))
+       else
+          error0(i) = tnoise_cld_1(i)
+       endif
+    end do
+    return
+
+!  end subroutine radiance_ex_obserr_4
+  end subroutine radiance_ex_obserr_tms
+
+!  subroutine radiance_ex_biascor_3(radmod,nchanl,tsim_bc,tsavg5,zasat, &
 !  subroutine radiance_ex_biascor_3(radmod,nchanl,tsim_bc,tsavg5,zasat, &
   subroutine radiance_ex_biascor_gmi(radmod,clw_obs,clw_guess_retrieval,nchanl,cld_rbc_idx)
 !$$$  subprogram documentation block

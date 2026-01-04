@@ -201,6 +201,7 @@ module qcmod
   public :: ifail_iland_det, ifail_isnow_det, ifail_iice_det, ifail_iwater_det,&
             ifail_imix_det, ifail_iomg_det, ifail_isst_det, ifail_itopo_det,&
             ifail_iwndspeed_det
+  public :: ifail_tms_overall_qc
   public :: cao_check 
   public :: buddycheck_t,buddydiag_save
   public :: vadwnd_l2rw_qc
@@ -337,6 +338,10 @@ module qcmod
 ! QC_MHS          
 !  Reject because fact1 > limit in subroutine qc_mhs
   integer(i_kind),parameter:: ifail_fact1_qc=50
+
+! QC_TMS
+!  Reject because tms overall qc = 1 
+  integer(i_kind),parameter:: ifail_tms_overall_qc=54
 
 ! OPTIONAL EXTRA QC
 !  Reject because of iland_det
@@ -3974,6 +3979,7 @@ subroutine qc_tms(nchanl,is,ndat,nsig,npred,sea,land,ice,snow,mixed,luse,   &
 !
 ! program history log:
 !     2024-08-28  eliu - initial 
+!     2025-10-20  xzhang - add actual qc 
 !
 ! input argument list:
 !     nchanl       - number of channels per obs
@@ -4030,7 +4036,7 @@ subroutine qc_tms(nchanl,is,ndat,nsig,npred,sea,land,ice,snow,mixed,luse,   &
 
 ! Declare local parameters
 
-  real(r_kind)    :: demisf,dtempf,efact,dtbf,term,cenlatx,fact
+  real(r_kind)    :: demisf,dtempf,efact,vfact,dtbf,term,cenlatx,fact
   real(r_kind)    :: efactmc,vfactmc,dtde1,dtde2,dtde3,dtde15,dsval,clwx
   integer(i_kind) :: i
   logical qc4emiss
@@ -4052,6 +4058,74 @@ subroutine qc_tms(nchanl,is,ndat,nsig,npred,sea,land,ice,snow,mixed,luse,   &
      demisf = 0.20_r_kind
      dtempf = 4.5_r_kind
   end if
+
+  efactmc = one
+  vfactmc = one
+  efact = one
+  vfact = one
+
+  
+
+! QC applied for both clear and all-sky condition
+! Remove surface channel overland,high peaking channel with snow
+  do i=1,nchanl
+    if (sea) then
+      if (.not. ice) then
+         fact=one
+      else
+         fact=zero
+         if(id_qc(i) == igood_qc) id_qc(i)=ifail_iice_det
+      end if
+    else if (land ) then
+        if (i<=5 .or. i>=10) then
+          fact=zero
+          if(id_qc(i) == igood_qc) id_qc(i)=ifail_surface_qc
+        else
+          if (.not. snow) then
+            fact=one
+          else
+            fact=0
+            if(id_qc(i) == igood_qc) id_qc(i)=ifail_isnow_det
+          end if
+        end if
+    else
+      fact=zero
+      if(id_qc(i) == igood_qc) id_qc(i)=ifail_imix_det
+    end if
+     !    modified variances.
+    errf(i)   = fact*errf(i)
+    varinv(i) = fact*varinv(i)
+
+! Reduce q.c. bounds over higher topography
+   if (zsges > r2000) then
+      if(luse)aivals(11,is)= aivals(11,is) + one
+      if (i == 9 ) then !184.41
+         fact   = r2000/zsges
+         varinv(i)        = fact*varinv(i)
+         errf(i)          = fact*errf(i)
+      end if
+   end if
+! Generate q.c. bounds and modified variances.
+!    Modify error based on transmittance at top of model
+     varinv(i)=varinv(i)*ptau5(nsig,i)
+     errf(i)=errf(i)*ptau5(nsig,i)
+
+     if(varinv(i) > tiny_r_kind)then
+        dtbf=demisf*abs(emissivity_k(i))+dtempf*abs(ts(i))
+        term=dtbf*dtbf
+        if(i == 1 )then !91.65
+!          Adjust observation error based on magnitude of liquid
+!          water correction.  0.2 is empirical factor
+           term=term+0.2_r_kind*(predchan(3,i)*pred(3,i))**2
+
+           errf(i)   = efactmc*errf(i)
+           varinv(i) = vfactmc*varinv(i)
+        end if
+        errf(i)   = efact*errf(i)
+        if (term>tiny_r_kind)varinv(i)=varinv(i)/(one+varinv(i)*term)
+     end if
+  end do
+
 
 !  write(6,*)'emily checking QC to be impemented for TMS Tomorrow.io ...'
 

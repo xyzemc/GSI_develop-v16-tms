@@ -2126,7 +2126,6 @@ subroutine call_crtm(obstype,obstime,data_s,nchanl,nreal,ich, &
                     cloud_cont(k,ii)=cloud(kk2,ii)*c6(k)
                  end do
               end if
-
               clw_guess = clw_guess +  cloud_cont(k,1)
               ciw_guess = ciw_guess +  cloud_cont(k,2)
               if(n_clouds_fwd_wk > 2) rain_guess = rain_guess +  cloud_cont(k,3)
@@ -2168,9 +2167,13 @@ subroutine call_crtm(obstype,obstime,data_s,nchanl,nreal,ich, &
               enddo
 
 !             clw_guess = clw_guess +  cloud_cont(k,1)
-              clw_guess = zero
-              clw_guess = clw_guess +  cloud_cont(k,1)
-              ciw_guess = ciw_guess +  cloud_cont(k,2)
+!xyz              clw_guess = zero
+!xyz              clw_guess = clw_guess +  cloud_cont(k,1)
+!xyz             ciw_guess = ciw_guess +  cloud_cont(k,2)
+              if (cloud_cont(k,2) >= 1.0e-6_r_kind) ciw_guess = ciw_guess +  cloud_cont(k,2)        
+              if (cloud_cont(k,3) >= 1.0e-6_r_kind) rain_guess = rain_guess +  cloud_cont(k,3)        
+              if (cloud_cont(k,4) >= 1.0e-6_r_kind) snow_guess = snow_guess +  cloud_cont(k,4)        
+              if (cloud_cont(k,5) >= 1.0e-6_r_kind) graupel_guess = graupel_guess +  cloud_cont(k,5)        
               if (lprecip_wk .and. (imp_physics == 8 .or. imp_physics == 11)) then 
                  rain_guess = rain_guess +  cloud_cont(k,3)
                  snow_guess = snow_guess +  cloud_cont(k,4)
@@ -2213,6 +2216,7 @@ subroutine call_crtm(obstype,obstime,data_s,nchanl,nreal,ich, &
            end if
         endif
      endif
+     !x if (clw_guess >0.) write(*,*) "debug_clw_guess", clw_guess
   
 !    Add in a drop-off to absorber amount in the stratosphere to be in more
 !    agreement with ECMWF profiles.  The drop-off is removed when climatological CO2 fields
