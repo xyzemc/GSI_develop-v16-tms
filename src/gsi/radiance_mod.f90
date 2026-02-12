@@ -768,8 +768,18 @@ contains
 
        obs_found=.false.
        do i=1,total_rad_type
-          if (index(trim(rad_type_info(i)%rtype),trim(obsname)) /= 0) then
-             obs_found=.true.
+          ! Guard: If the match is 'tms' but the sensor must be 'tms', can not be 'atms'.
+          if (trim(obsname) == 'tms' ) then
+             if (trim(rad_type_info(i)%rtype) == trim(obsname) ) then
+                obs_found = .true.
+             end if
+          else
+             if (index(trim(rad_type_info(i)%rtype),trim(obsname)) /= 0) then
+                obs_found = .true.
+             end if
+          end if
+          if (obs_found) then
+             if (mype==0) write(6,*) 'xyz obs_found ', i, ' ', rad_type_info(i)%rtype, ' - ', obsname,' ',ex_obserr
              istr=i
              if (trim(obsloc)=='sea') rad_type_info(i)%cld_sea_only=.true.
              rad_type_info(i)%ex_obserr=ex_obserr
